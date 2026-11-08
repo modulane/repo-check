@@ -20,4 +20,4 @@ Published on npm as `@modulane/repo-check`.
 
 ## License
 
-MIT
+[MIT](LICENSE)

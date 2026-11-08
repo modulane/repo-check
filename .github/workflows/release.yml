@@ -1,0 +1,92 @@
+name: Release
+
+# Every push to main runs the CI workflow, then releases once it has passed,
+# in the same run and from the same commit. semantic-release decides from the
+# commit messages whether a release is needed: fix: and feat: commits release,
+# docs:, style: and chore: do not. A release is a vX.Y.Z git tag and a GitHub
+# release; publishing to npm as well is described in the README.
+# The manual trigger remains available as a fallback, and its dry run shows
+# what the next release would be without creating anything.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Preview the next release without creating it
+        type: boolean
+        default: false
+
+# Nothing by default: each job asks for exactly what it needs.
+permissions: {}
+
+jobs:
+  ci:
+    name: CI
+    uses: $/.github/workflows/ci.yml
+    # A called workflow can use at most the permissions granted here. Its jobs
+    # only read the repository.
+    permissions:
+      contents: read # check out the code
+
+  release:
+    name: Release
+    needs: ci
+    # Release only from main, and never from a fork that has Actions enabled.
+    # Replace REPO-NAME with the repository's name: until then this job never
+    # runs, which is also why it never runs in modulane/repo-template.
+    if: github.repository == 'modulane/REPO-NAME' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Never run two releases at the same time; queue them instead. Only this
+    # job waits, so CI for the next commit can start straight away.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+
+    permissions:
+      contents: write # push the vX.Y.Z tag and create the GitHub release
+      issues: write # comment on the issues a release resolves
+      pull-requests: write # comment on the pull requests a release includes
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # semantic-release pushes the tag with GITHUB_TOKEN itself, so the
+          # token does not have to stay in .git/config for the whole job.
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          # No cache in the job that can write to the repository: a poisoned
+          # cache could reach a release.
+          package-manager-cache: false
+
+      # Corepack provides the Yarn version pinned in package.json
+      # "packageManager".
+      - name: Enable Corepack
+        run: corepack enable
+
+      # This job holds a token that can push tags. No dependency needs an
+      # install script to release, so none is allowed to run.
+      - name: Install dependencies
+        run: yarn install --immutable --mode=skip-build
+
+      # The CI job has already run the checks on this commit. semantic-release
+      # runs from yarn.lock and is never downloaded.
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Read from the environment, never interpolated into the script.
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          if [ "$DRY_RUN" = true ]; then
+            yarn semantic-release --dry-run
+          else
+            yarn semantic-release
+          fi

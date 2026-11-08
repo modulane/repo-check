@@ -1,0 +1,75 @@
+name: CI
+
+# Work happens on branches and reaches main through pull requests, so CI runs
+# on every pull request, not twice for each branch push. On main, the Release
+# workflow calls this workflow before releasing, so the commit it tests is
+# the commit it releases, in the same run.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read # check out the code
+
+# A new push to a pull request cancels the run it replaces. When Release calls
+# this workflow, each run gets its own group, so CI on main is never cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  # Replace this job with the repository's own checks: install, lint, type
+  # check, test and build, with a Node.js matrix (and an OS matrix for a CLI).
+  # In this reference repository it checks that every JSON file parses, so the
+  # labels and rulesets stay valid. List each new job in ci-passed below.
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check that every JSON file parses
+        run: |
+          status=0
+          while IFS= read -r file; do
+            if ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$file"; then
+              echo "::error file=$file::Invalid JSON."
+              status=1
+            fi
+          done < <(git ls-files '*.json')
+          exit $status
+
+  # The one CI check the main ruleset requires, so adding or dropping a job or
+  # a Node.js version in the matrix never means editing the ruleset. It runs
+  # even when a job it needs fails or is cancelled, because GitHub treats a
+  # skipped required check as passing.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions: {}
+
+    steps:
+      - name: Check that every job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          if [ -z "$RESULTS" ]; then
+            echo "::error::No job results to check."
+            exit 1
+          fi
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then
+              echo "::error::A required job ended with \"$result\"."
+              exit 1
+            fi
+          done
