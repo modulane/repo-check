@@ -188,6 +188,12 @@ export const settings = {
   delete_branch_on_merge: true,
 }
 
+export const security = {
+  vulnerability_alerts: true,
+  secret_scanning: true,
+  fork_pr_approval: 'first_time_contributors',
+}
+
 export const referenceFiles = () => ({
   '.github/workflows/pr-title.yml': caller('pr-title'),
   '.github/workflows/zizmor.yml': caller('zizmor'),
@@ -214,6 +220,7 @@ export const referenceFiles = () => ({
   LICENSE: 'MIT',
   'rulesets/main.json': JSON.stringify(ruleset),
   'settings.json': JSON.stringify(settings),
+  'security.json': JSON.stringify(security),
 })
 
 // A repository that matches the reference.
@@ -221,6 +228,7 @@ export const targetFiles = () => {
   const files = referenceFiles()
   delete files['rulesets/main.json']
   delete files['settings.json']
+  delete files['security.json']
   files['.github/workflows/release.yml'] = release('example')
   return files
 }

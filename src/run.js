@@ -6,6 +6,7 @@ import labels from './checks/labels.js'
 import pinnedActions from './checks/pinned-actions.js'
 import release from './checks/release.js'
 import rulesets from './checks/rulesets.js'
+import security from './checks/security.js'
 import settings from './checks/settings.js'
 import sharedWorkflows from './checks/shared-workflows.js'
 import { applyConfig, readConfig } from './config.js'
@@ -14,6 +15,7 @@ import { WORKFLOWS } from './workflows.js'
 export const checks = [
   rulesets,
   settings,
+  security,
   ci,
   pinnedActions,
   sharedWorkflows,

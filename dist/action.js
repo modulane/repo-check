@@ -8282,9 +8282,131 @@ var rulesets_default = {
   }
 };
 
+// src/checks/security.js
+var FILE3 = "security.json";
+var show = (value) => typeof value === "boolean" ? value ? "on" : "off" : typeof value === "string" ? `"${value}"` : String(value);
+var analysis = (key2) => async (github, repo, data) => {
+  const value = data.security_and_analysis?.[key2]?.status;
+  return value === void 0 ? void 0 : value === "enabled";
+};
+var settings = {
+  vulnerability_alerts: {
+    // 204 when the alerts are on, 404 when they are off, but also 404 for a
+    // token that is not an admin, as a user token says it is.
+    async read(github, repo, data) {
+      const { status } = await github.get(`/repos/${repo}/vulnerability-alerts`);
+      if (status === 204) return true;
+      return status === 404 && data.permissions?.admin !== false ? false : void 0;
+    }
+  },
+  automated_security_fixes: {
+    async read(github, repo) {
+      const { status, data } = await github.get(
+        `/repos/${repo}/automated-security-fixes`
+      );
+      return status === 200 ? data.enabled : void 0;
+    }
+  },
+  secret_scanning: { publicOnly: true, read: analysis("secret_scanning") },
+  secret_scanning_push_protection: {
+    publicOnly: true,
+    read: analysis("secret_scanning_push_protection")
+  },
+  private_vulnerability_reporting: {
+    publicOnly: true,
+    async read(github, repo) {
+      const { status, data } = await github.get(
+        `/repos/${repo}/private-vulnerability-reporting`
+      );
+      return status === 200 ? data.enabled : void 0;
+    }
+  },
+  fork_pr_approval: {
+    publicOnly: true,
+    async read(github, repo) {
+      const { status, data } = await github.get(
+        `/repos/${repo}/actions/permissions/fork-pr-contributor-approval`
+      );
+      return status === 200 ? data.approval_policy : void 0;
+    }
+  }
+};
+var security_default = {
+  id: "security",
+  title: "Security settings",
+  async run({ reference, github, repo }) {
+    if (!repo) {
+      return [
+        skip(
+          "Not a GitHub repository: name it with --repo to check its security settings."
+        )
+      ];
+    }
+    const text = await reference.read(FILE3);
+    if (text === null) {
+      return [skip(`The reference has no ${FILE3} to compare with.`)];
+    }
+    const expected = JSON.parse(text);
+    const unknown = Object.keys(expected).filter((key2) => !settings[key2]);
+    const { status, data } = await github.get(`/repos/${repo}`);
+    github.assertOk(status, data, `read the settings of ${repo}`);
+    const findings = [];
+    const hidden = [];
+    const publicOnly = [];
+    let matching = 0;
+    for (const [key2, value] of Object.entries(expected)) {
+      const setting = settings[key2];
+      if (!setting) continue;
+      if (setting.publicOnly && data.private) {
+        publicOnly.push(key2);
+        continue;
+      }
+      const actual = await setting.read(github, repo, data);
+      if (actual === void 0) hidden.push(key2);
+      else if (actual !== value) {
+        findings.push(
+          fail(
+            `security:${key2}`,
+            `\`${key2}\` is ${show(actual)}, the reference ${show(value)}.`
+          )
+        );
+      } else matching += 1;
+    }
+    if (unknown.length > 0) {
+      findings.push(
+        skip(
+          `repo-check does not know ${unknown.map((key2) => `\`${key2}\``).join(", ")} in ${FILE3}.`
+        )
+      );
+    }
+    if (publicOnly.length > 0) {
+      findings.push(
+        skip(
+          `${repo} is private, and GitHub's Free plan offers ${publicOnly.map((key2) => `\`${key2}\``).join(", ")} to public repositories only.`
+        )
+      );
+    }
+    if (hidden.length > 0) {
+      findings.push(
+        skip(
+          `GitHub does not show ${hidden.map((key2) => `\`${key2}\``).join(", ")} with this token: it needs read access to the administration of ${repo}.`
+        )
+      );
+    }
+    if (!findings.some((finding) => finding.level === "fail") && matching > 0) {
+      findings.unshift(
+        pass(
+          `${matching} security setting${matching === 1 ? " matches" : "s match"} the reference.`
+        )
+      );
+    }
+    return findings;
+  }
+};
+
 // src/checks/settings.js
-var FILE3 = "settings.json";
-var show = (value) => typeof value === "string" ? `"${value}"` : String(value);
+var FILE4 = "settings.json";
+var show2 = (value) => typeof value === "string" ? `"${value}"` : String(value);
 var settings_default = {
   id: "settings",
   title: "Repository settings",
@@ -8296,9 +8418,9 @@ var settings_default = {
         )
       ];
     }
-    const text = await reference.read(FILE3);
+    const text = await reference.read(FILE4);
     if (text === null) {
-      return [skip(`The reference has no ${FILE3} to compare with.`)];
+      return [skip(`The reference has no ${FILE4} to compare with.`)];
     }
     const expected = JSON.parse(text);
     const { status, data } = await github.get(`/repos/${repo}`);
@@ -8311,7 +8433,7 @@ var settings_default = {
         findings.push(
           fail(
             `settings:${key2}`,
-            `\`${key2}\` is ${show(data[key2])}, the reference ${show(value)}.`
+            `\`${key2}\` is ${show2(data[key2])}, the reference ${show2(value)}.`
           )
         );
       }
@@ -8564,6 +8686,7 @@ var applyConfig = (results, config) => {
 var checks = [
   rulesets_default,
   settings_default,
+  security_default,
   ci_default,
   pinned_actions_default,
   shared_workflows_default,
@@ -8865,7 +8988,10 @@ var formatText = ({ target, reference, results, fixed }, { color = false } = {})
   }
   const failed = countFailures(results);
   lines2.push(
-    failed === 0 ? paint("green", `No drift: all ${results.length} checks passed.`) : paint("red", `${failed} of ${results.length} checks found drift.`)
+    failed === 0 ? paint(
+      "green",
+      results.length === 1 ? "No drift: the check passed." : `No drift: all ${results.length} checks passed.`
+    ) : paint("red", `${failed} of ${results.length} checks found drift.`)
   );
   return lines2.join("\n");
 };

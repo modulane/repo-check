@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
+import security from '../src/checks/security.js'
 import settings from '../src/checks/settings.js'
 import { runChecks } from '../src/run.js'
 import {
@@ -114,6 +115,119 @@ describe('repository settings', () => {
     assert.equal(
       findings[0].message,
       '`allow_merge_commit` is true, the reference false.',
+    )
+  })
+})
+
+describe('security settings', () => {
+  const REPO = '/repos/modulane/example'
+  const context = (repo, routes = {}) => ({
+    reference: memorySource(referenceFiles()),
+    target: memorySource(targetFiles()),
+    repo: 'modulane/example',
+    github: fakeGitHub({ [REPO]: [200, repo], ...routes }),
+  })
+  const enabled = {
+    secret_scanning: { status: 'enabled' },
+  }
+  const levels = findings =>
+    findings.map(finding => [finding.level, finding.id])
+
+  test('matching settings pass', async () => {
+    const findings = await security.run(
+      context(
+        { private: false, security_and_analysis: enabled },
+        {
+          [`${REPO}/vulnerability-alerts`]: [204, null],
+          [`${REPO}/actions/permissions/fork-pr-contributor-approval`]: [
+            200,
+            { approval_policy: 'first_time_contributors' },
+          ],
+        },
+      ),
+    )
+    assert.deepEqual(levels(findings), [['pass', undefined]])
+    assert.equal(
+      findings[0].message,
+      '3 security settings match the reference.',
+    )
+  })
+
+  test('a setting that is off, or another policy, fails', async () => {
+    const findings = await security.run(
+      context(
+        {
+          private: false,
+          security_and_analysis: { secret_scanning: { status: 'disabled' } },
+        },
+        {
+          [`${REPO}/actions/permissions/fork-pr-contributor-approval`]: [
+            200,
+            { approval_policy: 'all_external_contributors' },
+          ],
+        },
+      ),
+    )
+    assert.deepEqual(levels(findings), [
+      ['fail', 'security:vulnerability_alerts'],
+      ['fail', 'security:secret_scanning'],
+      ['fail', 'security:fork_pr_approval'],
+    ])
+    assert.equal(
+      findings[0].message,
+      '`vulnerability_alerts` is off, the reference on.',
+    )
+    assert.equal(
+      findings[2].message,
+      '`fork_pr_approval` is "all_external_contributors", the reference "first_time_contributors".',
+    )
+  })
+
+  test('a private repository skips what GitHub offers to public ones only', async () => {
+    const findings = await security.run(
+      context(
+        { private: true, security_and_analysis: null },
+        { [`${REPO}/vulnerability-alerts`]: [204, null] },
+      ),
+    )
+    assert.deepEqual(levels(findings), [
+      ['pass', undefined],
+      ['skip', undefined],
+    ])
+    assert.match(findings[1].message, /`secret_scanning`, `fork_pr_approval`/)
+  })
+
+  test('a token that is not an admin skips what it cannot see', async () => {
+    const findings = await security.run(
+      context({ private: false, permissions: { admin: false, push: true } }),
+    )
+    assert.deepEqual(levels(findings), [['skip', undefined]])
+    assert.match(
+      findings[0].message,
+      /^GitHub does not show `vulnerability_alerts`, `secret_scanning`, `fork_pr_approval`/,
+    )
+  })
+
+  test('a setting the token cannot read is skipped', async () => {
+    const findings = await security.run(
+      context(
+        { private: false, security_and_analysis: enabled },
+        {
+          [`${REPO}/vulnerability-alerts`]: [403, { message: 'Forbidden' }],
+          [`${REPO}/actions/permissions/fork-pr-contributor-approval`]: [
+            403,
+            { message: 'Forbidden' },
+          ],
+        },
+      ),
+    )
+    assert.deepEqual(levels(findings), [
+      ['pass', undefined],
+      ['skip', undefined],
+    ])
+    assert.match(
+      findings[1].message,
+      /`vulnerability_alerts`, `fork_pr_approval` with this token/,
     )
   })
 })

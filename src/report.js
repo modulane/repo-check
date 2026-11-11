@@ -53,7 +53,12 @@ export const formatText = (
   const failed = countFailures(results)
   lines.push(
     failed === 0
-      ? paint('green', `No drift: all ${results.length} checks passed.`)
+      ? paint(
+          'green',
+          results.length === 1
+            ? 'No drift: the check passed.'
+            : `No drift: all ${results.length} checks passed.`,
+        )
       : paint('red', `${failed} of ${results.length} checks found drift.`),
   )
   return lines.join('\n')
