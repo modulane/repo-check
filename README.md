@@ -95,7 +95,7 @@ Shared workflows
 
 …
 
-3 of 11 checks found drift.
+3 of 10 checks found drift.
 ```
 
 ```text
