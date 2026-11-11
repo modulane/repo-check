@@ -119,8 +119,15 @@ export const main = async ({
   let fixed
   if (values.fix) {
     for (const [path, text] of run.changes) {
+      // A checkout with CRLF line endings, as Git makes on Windows, keeps
+      // them: the fixed lines would otherwise end in LF alone.
+      const before = await target.source.read(path)
+      const crlf = before?.includes('\r\n')
       await mkdir(dirname(join(target.dir, path)), { recursive: true })
-      await writeFile(join(target.dir, path), text)
+      await writeFile(
+        join(target.dir, path),
+        crlf ? text.replace(/\r?\n/g, '\r\n') : text,
+      )
     }
     // The report shows the repository as it is now, after the fixes.
     results = run.after

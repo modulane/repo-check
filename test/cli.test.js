@@ -141,6 +141,26 @@ test('--fix writes the fixes and reports what is left', async () => {
   )
 })
 
+test('--fix keeps the CRLF line endings of a file', async () => {
+  await writeTree(join(root, 'crlf'), {
+    ...targetFiles(),
+    '.github/labels.json':
+      '[\r\n  { "name": "ci", "color": "5319e7", "description": "Workflows" }\r\n]\r\n',
+  })
+  const { code, out } = await run([
+    join(root, 'crlf'),
+    '--reference',
+    join(root, 'reference'),
+    '--only',
+    'labels',
+    '--fix',
+  ])
+  assert.equal(code, 0, out)
+  const text = await readFile(join(root, 'crlf', '.github/labels.json'), 'utf8')
+  assert.match(text, /"bug"/)
+  assert.equal(text.replace(/\r\n/g, '').includes('\n'), false)
+})
+
 test('--fix needs a local clone', async () => {
   await assert.rejects(run(['modulane/example', '--fix']), UsageError)
 })
