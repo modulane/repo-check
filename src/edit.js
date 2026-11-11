@@ -90,14 +90,19 @@ const isBox = line => /^\s*- \[[ xX]\] /.test(line)
 export const boxText = line => line.replace(/^\s*- \[[ xX]\] /, '').trim()
 
 // Adds the sections and boxes of the reference template that the
-// repository's template is missing, each where the reference has it.
-export const completeTemplate = (reference, actual) => {
+// repository's template is missing, each where the reference has it. With
+// `only`, as { heading } or { box }, it adds that one alone, so a box the
+// repository accepts is never added through the fix of another.
+export const completeTemplate = (reference, actual, only) => {
+  const wanted = line =>
+    !only || (only.box !== undefined && only.box === boxText(line))
   const expected = sections(reference)
   const result = sections(actual)
   expected.forEach((section, index) => {
     if (section.heading === null) return
     const own = result.find(other => other.heading === section.heading)
     if (!own) {
+      if (only && only.heading !== section.heading) return
       // After the section that comes before it in the reference.
       const previous = expected
         .slice(0, index)
@@ -112,7 +117,7 @@ export const completeTemplate = (reference, actual) => {
     }
     const have = new Set(own.lines.filter(isBox).map(boxText))
     const missing = section.lines.filter(
-      line => isBox(line) && !have.has(boxText(line)),
+      line => isBox(line) && !have.has(boxText(line)) && wanted(line),
     )
     if (missing.length === 0) return
     let last = own.lines.findLastIndex(isBox)

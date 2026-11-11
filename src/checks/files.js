@@ -20,14 +20,16 @@ const boxes = text =>
     .filter(line => /^\s*- \[[ xX]\] /.test(line))
     .map(boxText)
 
+// Each finding adds only its own section or box, so the ones the
+// repository accepts stay out.
 const checkTemplate = (expected, actual) => {
-  const where = {
+  const where = only => ({
     file: TEMPLATE,
     fix: {
       path: TEMPLATE,
-      edit: text => text && completeTemplate(expected, text),
+      edit: text => text && completeTemplate(expected, text, only),
     },
-  }
+  })
   const own = { headings: headings(actual), boxes: boxes(actual) }
   return [
     ...headings(expected)
@@ -36,7 +38,7 @@ const checkTemplate = (expected, actual) => {
         fail(
           `files:template:${heading}`,
           `${TEMPLATE} has no "${heading}" section.`,
-          where,
+          where({ heading }),
         ),
       ),
     ...boxes(expected)
@@ -45,7 +47,7 @@ const checkTemplate = (expected, actual) => {
         fail(
           `files:template-box:${box}`,
           `${TEMPLATE} is missing the box "${box}".`,
-          where,
+          where({ box }),
         ),
       ),
   ]
