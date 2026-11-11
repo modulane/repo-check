@@ -18,14 +18,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Replace this job with the repository's own checks: install, lint, type
-  # check, test and build, with a Node.js matrix (and an OS matrix for a CLI).
-  # In this reference repository it checks that every JSON file parses, so the
-  # labels and rulesets stay valid. List each new job in ci-passed below.
-  checks:
-    name: Checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  test:
+    name: Node ${{ matrix.node-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The even-numbered (LTS) lines that package.json "engines" allows,
+        # and the CLI on each runner system.
+        os: [ubuntu-latest]
+        node-version: [22, 24, 26]
+        include:
+          - os: windows-latest
+            node-version: 24
+          - os: macos-latest
+            node-version: 24
 
     steps:
       - name: Check out repository
@@ -33,16 +42,64 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check that every JSON file parses
+      # Corepack provides the Yarn version pinned in package.json
+      # "packageManager". It must be enabled before setup-node, which runs
+      # Yarn to find its cache. Node.js 25 and later no longer include
+      # Corepack, so it comes from the runner's default Node.js. Its shims go
+      # first on the PATH: the Windows runner has a global Yarn 1 that would
+      # come before them.
+      - name: Enable Corepack
+        shell: bash
         run: |
-          status=0
-          while IFS= read -r file; do
-            if ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$file"; then
-              echo "::error file=$file::Invalid JSON."
-              status=1
-            fi
-          done < <(git ls-files '*.json')
-          exit $status
+          mkdir -p "$RUNNER_TEMP/corepack"
+          corepack enable --install-directory "$RUNNER_TEMP/corepack"
+          echo "$RUNNER_TEMP/corepack" >> "$GITHUB_PATH"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      # Formatting, then the unit tests.
+      - name: Run checks and tests
+        run: yarn check
+
+  # The action runs dist/action.js as it is committed, so it must be the
+  # bundle of the source under test.
+  bundle:
+    name: Bundled action
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Check that dist/ matches the source
+        run: |
+          yarn build
+          if ! git diff --exit-code -- dist; then
+            echo "::error file=dist/action.js::dist/action.js is out of date: run yarn build and commit it."
+            exit 1
+          fi
 
   # The one CI check the main ruleset requires, so adding or dropping a job or
   # a Node.js version in the matrix never means editing the ruleset. It runs
@@ -51,7 +108,7 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [checks]
+    needs: [test, bundle]
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
