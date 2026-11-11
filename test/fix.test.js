@@ -162,6 +162,23 @@ describe('fixes', () => {
     )
   })
 
+  test('an accepted box stays out when another part of the template is fixed', async () => {
+    const run = await fixRepository({
+      '.github/PULL_REQUEST_TEMPLATE.md':
+        '## What and why\n\n## AI use\n\n- [ ] No AI tool was used\n',
+      '.github/repo-check.yml':
+        "accept:\n  - finding: 'files:template-box:AI tools were used, as described here:'\n    reason: Worded otherwise on purpose.\n",
+    })
+    assert.equal(
+      run.changes.get('.github/PULL_REQUEST_TEMPLATE.md'),
+      '## What and why\n\n## Release notes\n\n## AI use\n\n- [ ] No AI tool was used\n',
+    )
+    assert.deepEqual(
+      run.left.map(finding => finding.id),
+      [],
+    )
+  })
+
   test('labels are merged, keeping the repository its own', async () => {
     const run = await fixRepository({
       '.github/labels.json': JSON.stringify([

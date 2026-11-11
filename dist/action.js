@@ -7482,13 +7482,15 @@ var sections = (text) => {
 };
 var isBox = (line) => /^\s*- \[[ xX]\] /.test(line);
 var boxText = (line) => line.replace(/^\s*- \[[ xX]\] /, "").trim();
-var completeTemplate = (reference, actual) => {
+var completeTemplate = (reference, actual, only) => {
+  const wanted = (line) => !only || only.box !== void 0 && only.box === boxText(line);
   const expected = sections(reference);
   const result = sections(actual);
   expected.forEach((section, index) => {
     if (section.heading === null) return;
     const own = result.find((other) => other.heading === section.heading);
     if (!own) {
+      if (only && only.heading !== section.heading) return;
       const previous = expected.slice(0, index).reverse().map((other) => result.findIndex((mine) => mine.heading === other.heading)).find((at2) => at2 > 0);
       const at = previous === void 0 ? 1 : previous + 1;
       const body = [...section.lines];
@@ -7498,7 +7500,7 @@ var completeTemplate = (reference, actual) => {
     }
     const have = new Set(own.lines.filter(isBox).map(boxText));
     const missing = section.lines.filter(
-      (line) => isBox(line) && !have.has(boxText(line))
+      (line) => isBox(line) && !have.has(boxText(line)) && wanted(line)
     );
     if (missing.length === 0) return;
     let last = own.lines.findLastIndex(isBox);
@@ -7773,27 +7775,27 @@ var TEMPLATE = ".github/PULL_REQUEST_TEMPLATE.md";
 var headings = (text) => normalize(text).split("\n").filter((line) => /^## /.test(line)).map((line) => line.slice(3).trim());
 var boxes = (text) => normalize(text).split("\n").filter((line) => /^\s*- \[[ xX]\] /.test(line)).map(boxText);
 var checkTemplate = (expected, actual) => {
-  const where = {
+  const where = (only) => ({
     file: TEMPLATE,
     fix: {
       path: TEMPLATE,
-      edit: (text) => text && completeTemplate(expected, text)
+      edit: (text) => text && completeTemplate(expected, text, only)
     }
-  };
+  });
   const own = { headings: headings(actual), boxes: boxes(actual) };
   return [
     ...headings(expected).filter((heading) => !own.headings.includes(heading)).map(
       (heading) => fail(
         `files:template:${heading}`,
         `${TEMPLATE} has no "${heading}" section.`,
-        where
+        where({ heading })
       )
     ),
     ...boxes(expected).filter((box) => !own.boxes.includes(box)).map(
       (box) => fail(
         `files:template-box:${box}`,
         `${TEMPLATE} is missing the box "${box}".`,
-        where
+        where({ box })
       )
     )
   ];
