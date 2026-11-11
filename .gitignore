@@ -41,3 +41,10 @@ Desktop.ini
 
 # Generated npm package archives
 *.tgz
+
+# Yarn: keep only what the team shares
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
