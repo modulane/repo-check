@@ -1,57 +1,74 @@
 // .github/labels.json has every label of the reference, with the same color
 // and description. A repository may add labels of its own.
-import { inProse } from '../compare.js'
-import { fail, pass } from './findings.js'
+import { copyOf, fail, pass } from './findings.js'
 
 const FILE = '.github/labels.json'
 
-const quoted = names => inProse(names.map(name => `"${name}"`))
+// The reference's labels in its order, then the repository's own labels.
+// Each fix writes the whole list, so the file reads the same whichever fix
+// runs first.
+const merged = (expected, actual) => {
+  const names = new Set(expected.map(label => label.name.toLowerCase()))
+  const own = actual.filter(
+    label => !names.has(String(label.name).toLowerCase()),
+  )
+  return `${JSON.stringify([...expected, ...own], null, 2)}\n`
+}
 
 export default {
   id: 'labels',
   title: 'Labels',
   async run({ reference, target }) {
+    const expectedText = (await reference.read(FILE)) ?? '[]'
+    const expected = JSON.parse(expectedText)
     const text = await target.read(FILE)
-    if (text === null) return [fail(`${FILE} is missing.`, { file: FILE })]
+    if (text === null) {
+      return [
+        fail('labels:missing', `${FILE} is missing.`, {
+          file: FILE,
+          fix: copyOf(FILE, expectedText),
+        }),
+      ]
+    }
     let actual
     try {
       actual = JSON.parse(text)
     } catch (error) {
-      return [fail(`${FILE} does not parse: ${error.message}`, { file: FILE })]
+      return [
+        fail('labels:parse', `${FILE} does not parse: ${error.message}`, {
+          file: FILE,
+        }),
+      ]
     }
-    const expected = JSON.parse((await reference.read(FILE)) ?? '[]')
+    if (!Array.isArray(actual)) actual = []
     const byName = new Map(
-      (Array.isArray(actual) ? actual : []).map(label => [
-        String(label.name).toLowerCase(),
-        label,
-      ]),
+      actual.map(label => [String(label.name).toLowerCase(), label]),
     )
-    const missing = []
-    const changed = []
+    const where = { file: FILE, fix: copyOf(FILE, merged(expected, actual)) }
+    const findings = []
     for (const label of expected) {
       const match = byName.get(label.name.toLowerCase())
-      if (!match) missing.push(label.name)
-      else if (
+      if (!match) {
+        findings.push(
+          fail(
+            `labels:${label.name}`,
+            `${FILE} is missing "${label.name}".`,
+            where,
+          ),
+        )
+      } else if (
         match.name !== label.name ||
         String(match.color).toLowerCase() !== label.color.toLowerCase() ||
         (match.description ?? '') !== (label.description ?? '')
       ) {
-        changed.push(label.name)
+        findings.push(
+          fail(
+            `labels:${label.name}`,
+            `"${label.name}" has another name, color or description than in the reference.`,
+            where,
+          ),
+        )
       }
-    }
-    const findings = []
-    if (missing.length > 0) {
-      findings.push(
-        fail(`${FILE} is missing ${quoted(missing)}.`, { file: FILE }),
-      )
-    }
-    if (changed.length > 0) {
-      findings.push(
-        fail(
-          `${quoted(changed)} ${changed.length > 1 ? 'have' : 'has'} another name, color or description than in the reference.`,
-          { file: FILE },
-        ),
-      )
     }
     if (findings.length === 0) {
       findings.push(

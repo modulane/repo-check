@@ -1,12 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
+import { checkRepository } from './check.js'
+import { DEFAULT_REFERENCE } from './defaults.js'
 import { createGitHub, findToken, originOf } from './github.js'
 import { formatJson, formatText } from './report.js'
-import { checks, hasFailures, runChecks } from './run.js'
+import { checks, hasFailures } from './run.js'
 import { githubSource, localSource, parseRepo } from './sources.js'
 
-export const DEFAULT_REFERENCE = 'modulane/repo-template'
+export { DEFAULT_REFERENCE }
 
 export const usage = `Usage: repo-check [target] [options]
 
@@ -23,6 +26,7 @@ Options:
                          (default: the target, or its origin remote)
   --only <checks>        Run only these checks, separated by commas:
                          ${checks.map(check => check.id).join(', ')}
+  --fix                  Fix what a file change can fix, in a local clone
   --json                 Print the results as JSON
   -h, --help             Print this help
   -v, --version          Print the version
@@ -36,6 +40,7 @@ const options = {
   reference: { type: 'string' },
   repo: { type: 'string' },
   only: { type: 'string' },
+  fix: { type: 'boolean' },
   json: { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
@@ -98,14 +103,34 @@ export const main = async ({
     target.repo ??
     (target.dir ? await originOf(target.dir) : null)
 
-  const results = await runChecks(
-    { target: target.source, reference: reference.source, github, repo },
+  if (values.fix && !target.dir) {
+    throw new UsageError('--fix only works on a local clone.')
+  }
+
+  const run = await checkRepository({
+    target: target.source,
+    reference: reference.source,
+    github,
+    repo,
     only,
-  )
+    fix: values.fix,
+  })
+  let results = run.results
+  let fixed
+  if (values.fix) {
+    for (const [path, text] of run.changes) {
+      await mkdir(dirname(join(target.dir, path)), { recursive: true })
+      await writeFile(join(target.dir, path), text)
+    }
+    // The report shows the repository as it is now, after the fixes.
+    results = run.after
+    fixed = { findings: run.fixed.length, files: [...run.changes.keys()] }
+  }
   const report = {
     target: repo ?? target.source.name,
     reference: reference.source.name,
     results,
+    fixed,
   }
   stdout.write(
     `${values.json ? formatJson(report) : formatText(report, { color: Boolean(stdout.isTTY) && !env.NO_COLOR })}\n`,

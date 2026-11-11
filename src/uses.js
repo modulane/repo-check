@@ -39,3 +39,7 @@ export const compareVersions = (a, b) => {
   }
   return 0
 }
+
+// How a report names an action or a shared workflow:
+// modulane/workflows/.github/workflows/zizmor.yml is modulane/workflows/zizmor.yml.
+export const shortName = name => name.replace('/.github/workflows/', '/')

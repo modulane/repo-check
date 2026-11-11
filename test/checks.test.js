@@ -337,8 +337,8 @@ describe('labels', () => {
       }),
     )
     assert.deepEqual(failures(findings), [
-      '.github/labels.json is missing "ci".',
       '"bug" has another name, color or description than in the reference.',
+      '.github/labels.json is missing "ci".',
     ])
   })
 })
@@ -402,13 +402,17 @@ describe('rulesets', () => {
     const findings = await rulesets.run(
       context({}, { github: fakeGitHub(routes(actual)) }),
     )
-    assert.deepEqual(levels(findings), ['fail', 'warn'])
-    assert.match(findings[0].message, /no `deletion` rule/)
-    assert.match(
-      findings[0].message,
-      /`required_status_checks\.required_status_checks`/,
+    assert.deepEqual(
+      findings.map(finding => [finding.level, finding.id]),
+      [
+        ['fail', 'rulesets:main ruleset:deletion'],
+        [
+          'fail',
+          'rulesets:main ruleset:required_status_checks.required_status_checks',
+        ],
+        ['warn', 'rulesets:main ruleset:creation'],
+      ],
     )
-    assert.match(findings[1].message, /`creation`/)
   })
 
   test('a hidden bypass list is skipped', async () => {

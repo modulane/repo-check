@@ -62,6 +62,39 @@ jobs:
       - name: Run checks and tests
         run: yarn check
 
+  # The action runs dist/action.js as it is committed, so it must be the
+  # bundle of the source under test.
+  bundle:
+    name: Bundled action
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Check that dist/ matches the source
+        run: |
+          yarn build
+          if ! git diff --exit-code -- dist; then
+            echo "::error file=dist/action.js::dist/action.js is out of date: run yarn build and commit it."
+            exit 1
+          fi
+
   # The one CI check the main ruleset requires, so adding or dropping a job or
   # a Node.js version in the matrix never means editing the ruleset. It runs
   # even when a job it needs fails or is cancelled, because GitHub treats a
@@ -69,7 +102,7 @@ jobs:
   ci-passed:
     name: CI passed
     if: always()
-    needs: [test]
+    needs: [test, bundle]
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

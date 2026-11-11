@@ -1,6 +1,7 @@
 // The files every repository copies from the reference.
 import { inProse, normalize } from '../compare.js'
-import { fail, pass } from './findings.js'
+import { boxText, completeTemplate } from '../edit.js'
+import { copyOf, fail, pass } from './findings.js'
 
 // Copied as they are.
 const SAME = ['.editorconfig', '.gitattributes', '.github/CODEOWNERS']
@@ -17,33 +18,37 @@ const boxes = text =>
   normalize(text)
     .split('\n')
     .filter(line => /^\s*- \[[ xX]\] /.test(line))
-    .map(line => line.replace(/^\s*- \[[ xX]\] /, '').trim())
+    .map(boxText)
 
 const checkTemplate = (expected, actual) => {
-  const missingHeadings = headings(expected).filter(
-    heading => !headings(actual).includes(heading),
-  )
-  const missingBoxes = boxes(expected).filter(
-    box => !boxes(actual).includes(box),
-  )
-  const findings = []
-  if (missingHeadings.length > 0) {
-    findings.push(
-      fail(
-        `${TEMPLATE} has no ${inProse(missingHeadings.map(heading => `"${heading}"`))} section.`,
-        { file: TEMPLATE },
-      ),
-    )
+  const where = {
+    file: TEMPLATE,
+    fix: {
+      path: TEMPLATE,
+      edit: text => text && completeTemplate(expected, text),
+    },
   }
-  if (missingBoxes.length > 0) {
-    findings.push(
-      fail(
-        `${TEMPLATE} is missing the ${missingBoxes.length > 1 ? 'boxes' : 'box'} ${inProse(missingBoxes.map(box => `"${box}"`))}.`,
-        { file: TEMPLATE },
+  const own = { headings: headings(actual), boxes: boxes(actual) }
+  return [
+    ...headings(expected)
+      .filter(heading => !own.headings.includes(heading))
+      .map(heading =>
+        fail(
+          `files:template:${heading}`,
+          `${TEMPLATE} has no "${heading}" section.`,
+          where,
+        ),
       ),
-    )
-  }
-  return findings
+    ...boxes(expected)
+      .filter(box => !own.boxes.includes(box))
+      .map(box =>
+        fail(
+          `files:template-box:${box}`,
+          `${TEMPLATE} is missing the box "${box}".`,
+          where,
+        ),
+      ),
+  ]
 }
 
 export default {
@@ -59,24 +64,36 @@ export default {
     for (const path of SAME) {
       const [expected, actual] = await read(path)
       if (expected === null) continue
-      if (actual === null)
-        findings.push(fail(`${path} is missing.`, { file: path }))
-      else if (normalize(expected) !== normalize(actual)) {
+      const where = { file: path, fix: copyOf(path, expected) }
+      if (actual === null) {
+        findings.push(fail(`files:${path}`, `${path} is missing.`, where))
+      } else if (normalize(expected) !== normalize(actual)) {
         findings.push(
-          fail(`${path} differs from the reference.`, { file: path }),
+          fail(`files:${path}`, `${path} differs from the reference.`, where),
         )
       }
     }
 
     const [expected, actual] = await read(TEMPLATE)
     if (expected !== null) {
-      if (actual === null)
-        findings.push(fail(`${TEMPLATE} is missing.`, { file: TEMPLATE }))
-      else findings.push(...checkTemplate(expected, actual))
+      if (actual === null) {
+        findings.push(
+          fail(`files:${TEMPLATE}`, `${TEMPLATE} is missing.`, {
+            file: TEMPLATE,
+            fix: copyOf(TEMPLATE, expected),
+          }),
+        )
+      } else findings.push(...checkTemplate(expected, actual))
     }
 
-    if ((await target.read('LICENSE')) === null) {
-      findings.push(fail('LICENSE is missing.', { file: 'LICENSE' }))
+    const [license, own] = await read('LICENSE')
+    if (own === null) {
+      findings.push(
+        fail('files:LICENSE', 'LICENSE is missing.', {
+          file: 'LICENSE',
+          fix: license === null ? undefined : copyOf('LICENSE', license),
+        }),
+      )
     }
 
     if (findings.length === 0) {

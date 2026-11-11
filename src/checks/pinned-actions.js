@@ -2,7 +2,14 @@
 // `# vX.Y.Z` comment, and is at the release the reference uses. A repository
 // ahead of the reference is only a warning: the reference changes first, so
 // it is the reference that needs the update.
-import { compareVersions, isSha, isVersion, parseUses } from '../uses.js'
+import { replacePin } from '../edit.js'
+import {
+  compareVersions,
+  isSha,
+  isVersion,
+  parseUses,
+  shortName,
+} from '../uses.js'
 import { WORKFLOWS, workflowFiles } from '../workflows.js'
 import { fail, pass, warn } from './findings.js'
 
@@ -39,37 +46,48 @@ const referencePins = uses => {
 }
 
 const checkUses = (uses, pins) => {
-  const where = { file: uses.file, line: uses.line }
+  const expected = pins.get(uses.name)
+  const where = {
+    file: uses.file,
+    line: uses.line,
+    // Any failure is fixed with the reference's pin, when it has one.
+    fix: expected && {
+      path: uses.file,
+      edit: text => text && replacePin(text, uses, expected),
+    },
+  }
+  const name = shortName(uses.name)
+  const id = `pinned-actions:${uses.file}:${name}`
   if (!isSha(uses.ref)) {
     return fail(
-      `${uses.name} is pinned to \`${uses.ref || 'nothing'}\`, not to a commit SHA.`,
+      id,
+      `${name} is pinned to \`${uses.ref || 'nothing'}\`, not to a commit SHA.`,
       where,
     )
   }
   if (!isVersion(uses.comment)) {
-    return fail(
-      `${uses.name} has no \`# vX.Y.Z\` comment after its SHA.`,
-      where,
-    )
+    return fail(id, `${name} has no \`# vX.Y.Z\` comment after its SHA.`, where)
   }
-  const expected = pins.get(uses.name)
   if (!expected) return null
   const order = compareVersions(uses.comment, expected.comment)
   if (order < 0) {
     return fail(
-      `${uses.name} is at ${uses.comment}, the reference at ${expected.comment}.`,
+      id,
+      `${name} is at ${uses.comment}, the reference at ${expected.comment}.`,
       where,
     )
   }
   if (order > 0) {
     return warn(
-      `${uses.name} is at ${uses.comment}, ahead of the reference at ${expected.comment}: update the reference first.`,
-      where,
+      id,
+      `${name} is at ${uses.comment}, ahead of the reference at ${expected.comment}: update the reference first.`,
+      { file: uses.file, line: uses.line },
     )
   }
   if (uses.ref !== expected.ref) {
     return fail(
-      `${uses.name} ${uses.comment} is pinned to ${uses.ref.slice(0, 7)}, the reference to ${expected.ref.slice(0, 7)}.`,
+      id,
+      `${name} ${uses.comment} is pinned to ${uses.ref.slice(0, 7)}, the reference to ${expected.ref.slice(0, 7)}.`,
       where,
     )
   }

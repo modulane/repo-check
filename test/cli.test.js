@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { main, UsageError } from '../src/cli.js'
-import { referenceFiles, targetFiles } from './helpers.js'
+import { fakeApi, referenceFiles, targetFiles } from './helpers.js'
 
 let root
 
@@ -62,7 +62,10 @@ test('drift exits 1 and is listed', async () => {
     'labels',
   ])
   assert.equal(code, 1)
-  assert.match(out, /✗ \.github\/labels\.json is missing "bug" and "ci"\./)
+  assert.match(
+    out,
+    /✗ \.github\/labels\.json is missing "bug"\. \(fixable\) \[labels:bug\]/,
+  )
   assert.match(out, /1 of 1 checks found drift\./)
 })
 
@@ -81,26 +84,7 @@ test('--json prints the results', async () => {
 })
 
 test('a reference on GitHub is read through the API', async () => {
-  const files = referenceFiles()
-  const requests = []
-  const github = async url => {
-    const { pathname, searchParams } = new URL(url)
-    requests.push(pathname + (searchParams.size ? `?${searchParams}` : ''))
-    const path = decodeURIComponent(
-      pathname.replace('/repos/modulane/repo-template/contents/', ''),
-    )
-    if (Object.hasOwn(files, path)) {
-      return {
-        status: 200,
-        json: async () => ({
-          type: 'file',
-          encoding: 'base64',
-          content: Buffer.from(files[path]).toString('base64'),
-        }),
-      }
-    }
-    return { status: 404, json: async () => ({}) }
-  }
+  const api = fakeApi({ repos: { 'modulane/repo-template': referenceFiles() } })
   let out = ''
   const code = await main({
     argv: [
@@ -112,14 +96,53 @@ test('a reference on GitHub is read through the API', async () => {
     ],
     env,
     stdout: { write: text => (out += text) },
-    fetch: github,
+    fetch: api.fetch,
   })
   assert.equal(code, 0, out)
   assert.ok(
-    requests.includes(
-      '/repos/modulane/repo-template/contents/.github/labels.json?ref=v1',
+    api.requests.some(
+      request =>
+        request.path ===
+          '/repos/modulane/repo-template/contents/.github/labels.json' &&
+        request.query === 'ref=v1',
     ),
   )
+})
+
+test('a reference that cannot be read stops the run', async () => {
+  await assert.rejects(
+    main({
+      argv: [join(root, 'target'), '--reference', 'modulane/private'],
+      env,
+      stdout: { write: () => {} },
+      fetch,
+    }),
+    /modulane\/private has no \.github\/workflows: it does not exist, or this token cannot read it\./,
+  )
+})
+
+test('--fix writes the fixes and reports what is left', async () => {
+  const { code, out } = await run([
+    join(root, 'drifted'),
+    '--reference',
+    join(root, 'reference'),
+    '--only',
+    'labels',
+    '--fix',
+  ])
+  assert.equal(code, 0, out)
+  assert.match(out, /Fixed 2 findings in \.github\/labels\.json\./)
+  const labels = JSON.parse(
+    await readFile(join(root, 'drifted', '.github/labels.json'), 'utf8'),
+  )
+  assert.deepEqual(
+    labels.map(label => label.name),
+    ['bug', 'ci'],
+  )
+})
+
+test('--fix needs a local clone', async () => {
+  await assert.rejects(run(['modulane/example', '--fix']), UsageError)
 })
 
 test('usage errors are reported as such', async () => {

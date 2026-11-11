@@ -1,73 +1,66 @@
 // The rulesets on the default branch match the reference's rulesets/*.json:
 // the main ruleset and the maintainer review ruleset. They live in the
 // repository settings, not in its files, so this check reads them from
-// GitHub.
+// GitHub, and no pull request can fix them.
 import { differences, inProse } from '../compare.js'
 import { fail, pass, skip, warn } from './findings.js'
 
 const DIR = 'rulesets'
 
-const code = paths => inProse(paths.map(path => `\`${path}\``))
+const compareRuleset = (expected, actual) => {
+  const { name, rules = [], bypass_actors: bypass, ...rest } = expected
+  const id = `rulesets:${name}`
+  const differs = path =>
+    fail(
+      `${id}:${path}`,
+      `"${name}" differs from the reference in \`${path}\`.`,
+    )
+  const findings = differences(rest, actual).map(differs)
 
-const compareRules = (expected = [], actual = []) => {
-  const findings = []
-  for (const rule of expected) {
-    const match = actual.find(other => other.type === rule.type)
+  for (const rule of rules) {
+    const match = (actual.rules ?? []).find(other => other.type === rule.type)
     if (!match) {
-      findings.push(`no \`${rule.type}\` rule`)
+      findings.push(
+        fail(`${id}:${rule.type}`, `"${name}" has no \`${rule.type}\` rule.`),
+      )
       continue
     }
-    const paths = differences(rule.parameters ?? {}, match.parameters ?? {})
-    if (paths.length > 0) {
-      findings.push(
-        `${code(paths.map(path => `${rule.type}.${path}`.replace(/\.$/, '')))}`,
-      )
+    for (const path of differences(
+      rule.parameters ?? {},
+      match.parameters ?? {},
+    )) {
+      findings.push(differs(`${rule.type}.${path}`.replace(/\.$/, '')))
     }
   }
-  const extra = actual
-    .map(rule => rule.type)
-    .filter(type => !expected.some(rule => rule.type === type))
-  return { findings, extra }
-}
 
-const compareRuleset = (expected, actual) => {
-  const { name, rules, bypass_actors: bypass, ...rest } = expected
-  const problems = []
-  const notes = []
-
-  const paths = differences(rest, actual)
-  if (paths.length > 0) problems.push(code(paths))
-
-  const compared = compareRules(rules, actual.rules)
-  problems.push(...compared.findings)
-  if (compared.extra.length > 0) {
-    notes.push(
-      warn(
-        `"${name}" has rules the reference does not: ${code(compared.extra)}.`,
-      ),
-    )
+  for (const rule of actual.rules ?? []) {
+    if (!rules.some(other => other.type === rule.type)) {
+      findings.push(
+        warn(
+          `${id}:${rule.type}`,
+          `"${name}" has a \`${rule.type}\` rule that the reference does not.`,
+        ),
+      )
+    }
   }
 
   // GitHub only shows who can bypass a ruleset to repository admins.
   if (bypass !== undefined) {
     if (actual.bypass_actors === undefined) {
-      notes.push(
+      findings.push(
         skip(
           `The bypass list of "${name}" is only visible with admin access to the repository.`,
         ),
       )
     } else if (differences(bypass, actual.bypass_actors).length > 0) {
-      problems.push('`bypass_actors`')
+      findings.push(differs('bypass_actors'))
     }
   }
 
-  if (problems.length > 0) {
-    return [
-      fail(`"${name}" differs from the reference: ${problems.join(', ')}.`),
-      ...notes,
-    ]
+  if (!findings.some(finding => finding.level === 'fail')) {
+    findings.unshift(pass(`"${name}" matches the reference.`))
   }
-  return [pass(`"${name}" matches the reference.`), ...notes]
+  return findings
 }
 
 export default {
@@ -114,6 +107,7 @@ export default {
         const names = data.map(other => `"${other.name}"`)
         findings.push(
           fail(
+            `rulesets:${ruleset.name}`,
             `${repo} has no "${ruleset.name}" ruleset${names.length > 0 ? `, only ${inProse(names)}` : ''}.`,
           ),
         )

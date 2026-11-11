@@ -3,9 +3,9 @@ name: Release
 # Every push to main runs the CI workflow, then releases once it has passed,
 # in the same run and from the same commit. semantic-release decides from the
 # commit messages whether a release is needed: fix: and feat: commits release,
-# docs:, style: and chore: do not. A release is a vX.Y.Z git tag and a GitHub
-# release; publishing to npm as well is described in the README. The Release
-# notes job then adds each pull request's notes to the GitHub release.
+# docs:, style: and chore: do not. A release is a vX.Y.Z git tag, a GitHub
+# release, the package on npm and the action's major tag. The Release notes
+# job then adds each pull request's notes to the GitHub release.
 # The manual trigger remains available as a fallback, and its dry run shows
 # what the next release would be without creating anything.
 on:
@@ -38,6 +38,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # Repository settings can limit this environment to main and add
+    # protection rules, and the npm trusted publisher requires it.
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@modulane/repo-check
+
     # Never run two releases at the same time; queue them instead. Only this
     # job waits, so CI for the next commit can start straight away.
     concurrency:
@@ -48,6 +54,7 @@ jobs:
       contents: write # push the vX.Y.Z tag and create the GitHub release
       issues: write # comment on the issues a release resolves
       pull-requests: write # comment on the pull requests a release includes
+      id-token: write # trusted publishing to npm, with provenance
 
     steps:
       - name: Checkout repository
@@ -62,19 +69,35 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          # No cache in the job that can write to the repository: a poisoned
-          # cache could reach a release.
+          # No cache in the job that publishes: a poisoned cache could reach npm.
           package-manager-cache: false
+
+      # Trusted publishing needs npm 11.5.1 or newer. The npm bundled with
+      # Node.js 24 provides it, so check it instead of downloading another npm
+      # while this job can request an OIDC token.
+      - name: Check the npm version
+        run: |
+          node --eval '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            if (major * 1e6 + minor * 1e3 + patch < 11005001) {
+              console.log("::error::Trusted publishing needs npm 11.5.1 or newer, found " + process.argv[1]);
+              process.exit(1);
+            }
+          ' "$(npm --version)"
 
       # Corepack provides the Yarn version pinned in package.json
       # "packageManager".
       - name: Enable Corepack
         run: corepack enable
 
-      # This job holds a token that can push tags. No dependency needs an
-      # install script to release, so none is allowed to run.
+      # Any step of this job can request an OIDC token, dependency install
+      # scripts included. No dependency needs one, so none is allowed to run.
       - name: Install dependencies
         run: yarn install --immutable --mode=skip-build
+
+      # Fail if the registry signature or provenance of a dependency is invalid.
+      - name: Verify dependency signatures
+        run: npm audit signatures
 
       # The CI job has already run the checks on this commit. semantic-release
       # runs from yarn.lock and is never downloaded.
@@ -89,6 +112,30 @@ jobs:
           else
             yarn semantic-release
           fi
+
+      # Workflows that use modulane/repo-check@v1 get every 1.x release:
+      # after a release, its major tag moves to the commit it tagged. The tag
+      # is set through the API, so no git credential is needed.
+      - name: Move the major tag
+        if: inputs.dry-run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag=$(git tag --points-at HEAD --list 'v*.*.*' | sort -V | tail -n 1)
+          if [ -z "$tag" ]; then
+            echo 'No release on this commit: the major tag stays where it is.'
+            exit 0
+          fi
+          major=${tag%%.*}
+          # git/ref/ (singular) matches the tag exactly; git/refs/ would also
+          # match v1.0.0 when v1 does not exist yet.
+          if gh api "repos/$GH_REPO/git/ref/tags/$major" --silent 2> /dev/null; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/$major"               -f sha="$GITHUB_SHA" -F force=true --silent
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs"               -f ref="refs/tags/$major" -f sha="$GITHUB_SHA" --silent
+          fi
+          echo "$major now points to $tag."
 
   release-notes:
     name: Release notes

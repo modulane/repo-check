@@ -1,0 +1,43 @@
+name: Repository drift check
+description: Check that a repository still matches its reference setup, and open a pull request that brings back what has drifted.
+author: modulane
+
+branding:
+  icon: git-pull-request
+  color: purple
+
+inputs:
+  token:
+    description: >-
+      The token to read the repository and the reference with. To open the
+      pull request, it needs contents, pull requests and workflows write
+      access, which GITHUB_TOKEN cannot have: use a GitHub App token.
+    default: ${{ github.token }}
+  reference:
+    description: The reference setup, as owner/repo[@ref] or a path in the workspace.
+    default: modulane/repo-template
+  repository:
+    description: The repository to check, as owner/repo. Defaults to the repository the workflow runs in.
+    default: ${{ github.repository }}
+  pull-request:
+    description: '"true" to open or update a pull request with the fixes, and close it once there is nothing left to fix.'
+    default: 'false'
+  branch:
+    description: The branch of the pull request.
+    default: repo-check
+  only:
+    description: Run only these checks, separated by commas.
+    default: ''
+
+outputs:
+  drift:
+    description: '"true" when the repository differs from the reference, "false" when it does not.'
+  pull-request:
+    description: The URL of the pull request, when one is open.
+
+# The runner's own Node.js runs the action, so it also works in container jobs
+# and on self-hosted runners without Node.js. Its dependencies are bundled in
+# dist/action.js, so nothing is installed.
+runs:
+  using: node24
+  main: dist/action.js

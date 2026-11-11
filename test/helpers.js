@@ -16,16 +16,61 @@ export const memorySource = (files, name = 'memory') => ({
   },
 })
 
-// Routes are paths without the query string, answered with [status, data].
+const respond = ([status, data]) => ({ status, json: async () => data })
+
+// A fake GitHub API. `repos` maps owner/repo to its files, served by the
+// contents API. `routes` answers other requests by "METHOD /path", or by
+// "/path" for a GET, with [status, data] or a function of the request body
+// that returns it. Every request is recorded.
+export const fakeApi = ({ repos = {}, routes = {} } = {}) => {
+  const requests = []
+  const fetch = async (url, init = {}) => {
+    const method = init.method ?? 'GET'
+    const { pathname, searchParams } = new URL(url)
+    const body = init.body ? JSON.parse(init.body) : undefined
+    requests.push({
+      method,
+      path: pathname,
+      query: searchParams.toString(),
+      body,
+    })
+    const route =
+      routes[`${method} ${pathname}`] ??
+      (method === 'GET' ? routes[pathname] : undefined)
+    if (route) return respond(typeof route === 'function' ? route(body) : route)
+    const contents = /^\/repos\/([^/]+\/[^/]+)\/contents\/(.*)$/.exec(pathname)
+    const files = contents && repos[contents[1]]
+    if (method === 'GET' && files) {
+      const path = decodeURIComponent(contents[2])
+      if (Object.hasOwn(files, path)) {
+        return respond([
+          200,
+          {
+            type: 'file',
+            encoding: 'base64',
+            content: Buffer.from(files[path]).toString('base64'),
+          },
+        ])
+      }
+      const entries = Object.keys(files)
+        .filter(other => other.startsWith(`${path}/`))
+        .map(other => other.slice(path.length + 1))
+        .filter(rest => !rest.includes('/'))
+      if (entries.length > 0) {
+        return respond([200, entries.map(name => ({ type: 'file', name }))])
+      }
+    }
+    return respond([404, { message: 'Not Found' }])
+  }
+  return {
+    fetch,
+    requests,
+    github: (token = 'token') => createGitHub({ token, fetch }),
+  }
+}
+
 export const fakeGitHub = (routes, token = 'token') =>
-  createGitHub({
-    token,
-    fetch: async url => {
-      const path = new URL(url).pathname
-      const [status, data] = routes[path] ?? [404, { message: 'Not Found' }]
-      return { status, json: async () => data }
-    },
-  })
+  fakeApi({ routes }).github(token)
 
 const SHA = 'a'.repeat(40)
 const OLD_SHA = 'b'.repeat(40)
@@ -137,6 +182,12 @@ export const ruleset = {
   target: 'branch',
 }
 
+export const settings = {
+  allow_squash_merge: true,
+  allow_merge_commit: false,
+  delete_branch_on_merge: true,
+}
+
 export const referenceFiles = () => ({
   '.github/workflows/pr-title.yml': caller('pr-title'),
   '.github/workflows/zizmor.yml': caller('zizmor'),
@@ -148,22 +199,28 @@ export const referenceFiles = () => ({
   '.github/PULL_REQUEST_TEMPLATE.md': template,
   '.editorconfig': 'root = true\n',
   '.gitattributes': '* text=auto eol=lf\n',
-  '.releaserc.json': JSON.stringify({
-    branches: ['main'],
-    plugins: [
-      '@semantic-release/commit-analyzer',
-      '@semantic-release/release-notes-generator',
-      '@semantic-release/github',
-    ],
-  }),
+  '.releaserc.json': JSON.stringify(
+    {
+      branches: ['main'],
+      plugins: [
+        '@semantic-release/commit-analyzer',
+        '@semantic-release/release-notes-generator',
+        '@semantic-release/github',
+      ],
+    },
+    null,
+    2,
+  ),
   LICENSE: 'MIT',
   'rulesets/main.json': JSON.stringify(ruleset),
+  'settings.json': JSON.stringify(settings),
 })
 
 // A repository that matches the reference.
 export const targetFiles = () => {
   const files = referenceFiles()
   delete files['rulesets/main.json']
+  delete files['settings.json']
   files['.github/workflows/release.yml'] = release('example')
   return files
 }

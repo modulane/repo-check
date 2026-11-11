@@ -1,11 +1,13 @@
 // CI ends in the single "CI passed" job that the main ruleset requires: it
 // runs even when a job fails, and it needs every other job, so no job can
 // fail without failing it. The Release workflow runs CI before releasing.
-import { inProse } from '../compare.js'
+import { addNeeds } from '../edit.js'
 import { jobsOf, readWorkflow, triggersOf } from '../workflows.js'
 import { fail, pass } from './findings.js'
 
 export const CI_PASSED = 'CI passed'
+
+const CI = '.github/workflows/ci.yml'
 
 const asList = value => (Array.isArray(value) ? value : value ? [value] : [])
 
@@ -24,38 +26,37 @@ export default {
   title: 'CI passed',
   async run({ reference, target }) {
     const ci = await readWorkflow(target, 'ci.yml')
-    if (!ci)
-      return [
-        fail('.github/workflows/ci.yml is missing.', {
-          file: '.github/workflows/ci.yml',
-        }),
-      ]
+    if (!ci) return [fail('ci:missing', `${CI} is missing.`, { file: CI })]
     if (ci.error) {
-      return [fail(`${ci.path} does not parse: ${ci.error}`, { file: ci.path })]
+      return [
+        fail('ci:parse', `${CI} does not parse: ${ci.error}`, { file: CI }),
+      ]
     }
-    const where = { file: ci.path }
+    const where = { file: CI }
     const findings = []
 
     const expected = await readWorkflow(reference, 'ci.yml')
     const triggers = triggersOf(ci)
-    const missing = triggersOf(expected).filter(
-      trigger => !triggers.includes(trigger),
-    )
-    if (missing.length > 0) {
-      findings.push(
-        fail(`${ci.path} does not run on ${inProse(missing)}.`, where),
-      )
+    for (const trigger of triggersOf(expected)) {
+      if (!triggers.includes(trigger)) {
+        findings.push(
+          fail(`ci:on:${trigger}`, `${CI} does not run on ${trigger}.`, where),
+        )
+      }
     }
 
     const jobs = jobsOf(ci)
     const final = jobs.find(([, job]) => job?.name === CI_PASSED)
     if (!final) {
-      findings.push(fail(`${ci.path} has no "${CI_PASSED}" job.`, where))
+      findings.push(
+        fail('ci:ci-passed', `${CI} has no "${CI_PASSED}" job.`, where),
+      )
     } else {
       const [id, job] = final
       if (!String(job.if ?? '').includes('always()')) {
         findings.push(
           fail(
+            'ci:always',
             `"${CI_PASSED}" does not run with \`if: always()\`, so a failed job skips it and GitHub counts the skipped check as passing.`,
             where,
           ),
@@ -63,14 +64,21 @@ export default {
       }
       const needs = asList(job.needs)
       const unchecked = jobs
-        .filter(([other, job]) => other !== id && !onlyOnMain(job))
+        .filter(([other, data]) => other !== id && !onlyOnMain(data))
         .map(([other]) => other)
         .filter(other => !needs.includes(other))
-      if (unchecked.length > 0) {
+      for (const other of unchecked) {
         findings.push(
           fail(
-            `"${CI_PASSED}" does not need ${inProse(unchecked.map(other => `\`${other}\``))}, so ${unchecked.length > 1 ? 'they' : 'it'} can fail without failing CI.`,
-            where,
+            `ci:needs:${other}`,
+            `"${CI_PASSED}" does not need \`${other}\`, so it can fail without failing CI.`,
+            {
+              ...where,
+              fix: {
+                path: CI,
+                edit: text => text && addNeeds(text, id, [other]),
+              },
+            },
           ),
         )
       }
@@ -83,9 +91,13 @@ export default {
       !jobsOf(release).some(([, job]) => callsCi(job))
     ) {
       findings.push(
-        fail(`${release.path} does not run CI before releasing.`, {
-          file: release.path,
-        }),
+        fail(
+          'ci:release',
+          `${release.path} does not run CI before releasing.`,
+          {
+            file: release.path,
+          },
+        ),
       )
     }
 

@@ -48,3 +48,6 @@ Desktop.ini
 !.yarn/plugins
 !.yarn/releases
 !.yarn/sdks
+
+# The bundled action is committed: the action runs it as it is.
+!/dist/

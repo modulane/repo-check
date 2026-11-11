@@ -10,21 +10,24 @@ export const createGitHub = ({
   token,
   fetch = globalThis.fetch,
   baseUrl = 'https://api.github.com',
-} = {}) => ({
-  token,
-  async get(path) {
+} = {}) => {
+  const request = async (method, path, body) => {
     const response = await fetch(baseUrl + path, {
+      method,
       headers: {
         accept: 'application/vnd.github+json',
         'user-agent': 'repo-check',
         'x-github-api-version': '2022-11-28',
         ...(token && { authorization: `Bearer ${token}` }),
+        ...(body !== undefined && { 'content-type': 'application/json' }),
       },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
     })
-    const data = await response.json().catch(() => null)
+    const data =
+      response.status === 204 ? null : await response.json().catch(() => null)
     return { status: response.status, data }
-  },
-  assertOk(status, data, action) {
+  }
+  const assertOk = (status, data, action) => {
     if (status >= 200 && status < 300) return
     const reason = data?.message ? ` (${data.message})` : ''
     const hint =
@@ -34,8 +37,20 @@ export const createGitHub = ({
     throw new GitHubError(
       `Could not ${action}: GitHub answered ${status}${reason}.${hint}`,
     )
-  },
-})
+  }
+  return {
+    token,
+    request,
+    assertOk,
+    get: path => request('GET', path),
+    // A request that must succeed: its data, or an error saying what failed.
+    async call(method, path, body, action) {
+      const { status, data } = await request(method, path, body)
+      assertOk(status, data, action)
+      return data
+    },
+  }
+}
 
 // GITHUB_TOKEN or GH_TOKEN, else the token of the GitHub CLI when it is
 // installed and signed in. Without a token, public repositories can still be
